@@ -10,11 +10,11 @@ struct GPIO {
 };
 
 inline void gpio_set(mbed::DigitalOut& gpio) {
-  gpio = 1;
+  gpio = 0;
 }
 
 inline void gpio_reset(mbed::DigitalOut& gpio) {
-  gpio = 0;
+  gpio = 1;
 }
 
 inline void gpio_toggle(mbed::DigitalOut& gpio) {
