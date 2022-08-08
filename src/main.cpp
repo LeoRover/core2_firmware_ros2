@@ -306,6 +306,8 @@ static void finiROS() {
   rclc_support_fini(&support);
 }
 
+extern uint32_t encoder_gpio_pull;
+
 static void setup() {
   set_microros_serial_transports(&uros_serial);
 
@@ -313,6 +315,7 @@ static void setup() {
 
   analogin_init(&battery_adc, BAT_MEAS);
 
+  encoder_gpio_pull = GPIO_PULLUP;
   dc.init(params);
 }
 

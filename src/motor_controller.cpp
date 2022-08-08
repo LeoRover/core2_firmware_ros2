@@ -26,10 +26,13 @@ inline float clamp(const float value, const float limit) {
 
 void MotorController::init() {
   motor_ = mot_driver[config_.driver_num].getDCMotor(config_.motor_num);
-  motor_->init(0);
-  motor_->setPolarity(config_.reverse_polarity);
+  motor_->init(PWM_21kHz);
+  motor_->setPolarity(!config_.reverse_polarity);
   motor_->setDriveMode(true);
   mot_driver[config_.driver_num].enable();
+  encoder_ = &encoder[config_.driver_num * 2 + config_.motor_num];
+  encoder_->setPolarity(config_.reverse_polarity);
+  encoder_->init();
 }
 
 void MotorController::setPWMDutyCycle(float pwm_duty) {
