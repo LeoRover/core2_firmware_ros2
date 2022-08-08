@@ -9,7 +9,7 @@ struct Parameters : diff_drive_lib::DiffDriveParams {
   Parameters() {
     // Wheel
     wheel_encoder_resolution = 878.4F;
-    wheel_torque_constant = 1.17647F;
+    wheel_torque_constant = 1.0F;
     wheel_pid_p = 0.0F;
     wheel_pid_i = 0.005F;
     wheel_pid_d = 0.0F;

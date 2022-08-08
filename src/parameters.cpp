@@ -2,8 +2,6 @@
 
 static constexpr const char* wheel_encoder_resolution_param_name =
     "wheels/encoder_resolution";
-static constexpr const char* wheel_torque_constant_param_name =
-    "wheels/torque_constant";
 static constexpr const char* wheel_pid_p_param_name = "wheels/pid/p";
 static constexpr const char* wheel_pid_i_param_name = "wheels/pid/i";
 static constexpr const char* wheel_pid_d_param_name = "wheels/pid/d";
@@ -47,8 +45,6 @@ bool Parameters::init(rclc_parameter_server_t* param_server) {
   RCCHECK(init_parameter_double(param_server,
                                 wheel_encoder_resolution_param_name,
                                 wheel_encoder_resolution))
-  RCCHECK(init_parameter_double(param_server, wheel_torque_constant_param_name,
-                                wheel_torque_constant))
   RCCHECK(
       init_parameter_double(param_server, wheel_pid_p_param_name, wheel_pid_p))
   RCCHECK(
@@ -81,8 +77,6 @@ inline void get_parameter_double(rclc_parameter_server_t* param_server,
 void Parameters::update(rclc_parameter_server_t* param_server) {
   get_parameter_double(param_server, wheel_encoder_resolution_param_name,
                        &wheel_encoder_resolution);
-  get_parameter_double(param_server, wheel_torque_constant_param_name,
-                       &wheel_torque_constant);
   get_parameter_double(param_server, wheel_pid_p_param_name, &wheel_pid_p);
   get_parameter_double(param_server, wheel_pid_i_param_name, &wheel_pid_i);
   get_parameter_double(param_server, wheel_pid_d_param_name, &wheel_pid_d);
