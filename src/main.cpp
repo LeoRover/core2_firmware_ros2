@@ -21,6 +21,7 @@
 #include "microros/serial_transport.hpp"
 
 #include "configuration.hpp"
+#include "hal_compat.hpp"
 #include "parameters.hpp"
 
 static rcl_allocator_t default_allocator = rcl_get_default_allocator();
@@ -78,6 +79,7 @@ static std_srvs__srv__Trigger_Response reset_odometry_res, firmware_version_res,
     board_type_res, reset_board_res;
 
 static bool reset_request = false;
+static DigitalOut LED(LED_PIN);
 
 MotorController MotA(MOT_A_CONFIG);
 MotorController MotB(MOT_B_CONFIG);
@@ -383,19 +385,19 @@ static void update() {
         battery_sum / static_cast<float>(std::min(BATTERY_BUFFER_SIZE, cnt));
   }
 
-  // if (battery_avg < params.battery_min_voltage) {
-  //   if (cnt % 10 == 0) gpio_toggle(LED);
-  // } else {
-  //   if (!ros_initialized) {
-  //     if (cnt % 50 == 0) gpio_toggle(LED);
-  //   } else {
-  //     gpio_reset(LED);
-  //   }
-  // }
+  if (battery_avg < params.battery_min_voltage) {
+    if (cnt % 10 == 0) gpio_toggle(LED);
+  } else {
+    if (!ros_initialized) {
+      if (cnt % 50 == 0) gpio_toggle(LED);
+    } else {
+      gpio_reset(LED);
+    }
+  }
 
   if (!ros_initialized) return;
 
-  // if (reset_request) reset();
+  if (reset_request) reset();
 
   dc.update(UPDATE_PERIOD);
 

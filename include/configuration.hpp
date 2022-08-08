@@ -14,6 +14,9 @@ const uint8_t BATTERY_PROBE_PERIOD = 10;
 // Number of battery voltage readings to average
 const uint32_t BATTERY_BUFFER_SIZE = 300;
 
+// Informative LED GPIO
+const PinName LED_PIN = EXT_PIN1;
+
 // The period (in milliseconds) between calls to the update() function
 const uint16_t UPDATE_PERIOD = 10;
 
