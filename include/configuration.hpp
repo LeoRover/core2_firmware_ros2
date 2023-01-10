@@ -7,6 +7,15 @@
 // Size of the heap memory used for micro-ROS entities
 const uint32_t UROS_HEAP_SIZE = 30000;
 
+// Domain ID used for ROS communication
+constexpr size_t ROS_DOMAIN_ID = 0;
+
+// Name of the ROS node
+constexpr char ROS_NODE_NAME[] = "firmware";
+
+// Namespace of the ROS node
+constexpr char ROS_NAMESPACE[] = "";
+
 // Number of encoder readings to remember when estimating the wheel velocity
 const uint32_t ENCODER_BUFFER_SIZE = 10;
 
