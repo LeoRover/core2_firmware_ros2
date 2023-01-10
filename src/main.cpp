@@ -148,7 +148,7 @@ static void wheelCmdVelCallback(const void* msgin, void* context) {
 
 static bool parameterChangedCallback(const Parameter*, const Parameter*,
                                      void*) {
-  params.update(&param_server);
+  reload_parameters = true;
   return true;
 }
 
@@ -364,6 +364,11 @@ static void loop() {
   //   (void)!rcl_publish(&imu_pub, &imu, NULL);
   //   publish_imu = false;
   // }
+
+  if (reload_parameters.exchange(false)) {
+    params.update(&param_server);
+    dc.updateParams(params);
+  }
 }
 
 static builtin_interfaces__msg__Time now() {
