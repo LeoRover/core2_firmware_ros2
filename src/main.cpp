@@ -24,9 +24,11 @@
 
 #include "configuration.hpp"
 #include "hal_compat.hpp"
+#include "microros_allocators.hpp"
 #include "parameters.hpp"
 
-static rcl_allocator_t default_allocator = rcl_get_default_allocator();
+static rcl_allocator_t microros_allocator =
+    rcutils_get_zero_initialized_allocator();
 static rclc_support_t support;
 static rcl_node_t node;
 static rclc_executor_t executor;
@@ -175,7 +177,7 @@ static void initMsgs() {
 
 static bool initROS() {
   // Support
-  RCCHECK(rclc_support_init(&support, 0, NULL, &default_allocator))
+  RCCHECK(rclc_support_init(&support, 0, NULL, &microros_allocator))
 
   // Node
   RCCHECK(rclc_node_init_default(&node, "firmware", "", &support))
@@ -183,7 +185,7 @@ static bool initROS() {
   // Executor
   RCCHECK(rclc_executor_init(&executor, &support.context,
                              15 + RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES,
-                             &default_allocator))
+                             &microros_allocator))
 
   // Publishers
   RCCHECK(rclc_publisher_init_best_effort(
@@ -307,11 +309,20 @@ static void finiROS() {
   (void)!rcl_publisher_fini(&battery_pub, &node);
   (void)!rcl_node_fini(&node);
   rclc_support_fini(&support);
+
+  free_all_heap();
 }
 
 extern uint32_t encoder_gpio_pull;
 
 static void setup() {
+  microros_allocator.allocate = microros_allocate;
+  microros_allocator.deallocate = microros_deallocate;
+  microros_allocator.reallocate = microros_reallocate;
+  microros_allocator.zero_allocate = microros_zero_allocate;
+
+  (void)!rcutils_set_default_allocator(&microros_allocator);
+
   set_microros_serial_transports(&uros_serial);
 
   initMsgs();

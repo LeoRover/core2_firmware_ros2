@@ -4,6 +4,9 @@
 
 #include "motor_controller.hpp"
 
+// Size of the heap memory used for micro-ROS entities
+const uint32_t UROS_HEAP_SIZE = 30000;
+
 // Number of encoder readings to remember when estimating the wheel velocity
 const uint32_t ENCODER_BUFFER_SIZE = 10;
 
