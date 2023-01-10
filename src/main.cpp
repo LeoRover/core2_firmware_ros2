@@ -1,3 +1,5 @@
+#include <atomic>
+
 #include <mbed.h>
 
 #include <rcl/rcl.h>
@@ -41,19 +43,19 @@ static analogin_t battery_adc;
 static float battery_buffer_memory[BATTERY_BUFFER_SIZE];
 static diff_drive_lib::CircularBuffer<float> battery_buffer(
     BATTERY_BUFFER_SIZE, battery_buffer_memory);
-static bool publish_battery = false;
+static std::atomic_bool publish_battery(false);
 
 static leo_msgs__msg__WheelOdom wheel_odom;
 static rcl_publisher_t wheel_odom_pub;
-static bool publish_wheel_odom = false;
+static std::atomic_bool publish_wheel_odom(false);
 
 static leo_msgs__msg__WheelStates wheel_states;
 static rcl_publisher_t wheel_states_pub;
-static bool publish_wheel_states = false;
+static std::atomic_bool publish_wheel_states(false);
 
 // static leo_msgs__msg__Imu imu;
 // static rcl_publisher_t imu_pub;
-// static bool publish_imu = false;
+// static std::atomic_bool publish_imu(false);
 
 static rcl_subscription_t twist_sub;
 static geometry_msgs__msg__Twist twist_msg;
@@ -78,7 +80,7 @@ static std_srvs__srv__Trigger_Request reset_odometry_req, firmware_version_req,
 static std_srvs__srv__Trigger_Response reset_odometry_res, firmware_version_res,
     board_type_res, reset_board_res;
 
-static bool reset_request = false;
+static std::atomic_bool reset_request(false);
 static DigitalOut LED(LED_PIN);
 
 MotorController MotA(MOT_A_CONFIG);
@@ -90,6 +92,7 @@ static diff_drive_lib::DiffDriveController dc(DD_CONFIG);
 // static ImuReceiver imu_receiver(&IMU_I2C);
 
 static Parameters params;
+static std::atomic_bool reload_parameters(false);
 
 static void cmdVelCallback(const void* msgin) {
   const geometry_msgs__msg__Twist* msg =
