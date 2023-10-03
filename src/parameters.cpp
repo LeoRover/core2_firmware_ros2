@@ -54,14 +54,14 @@ bool Parameters::init(rclc_parameter_server_t* param_server) {
   RCCHECK(init_parameter_double(param_server, wheel_pwm_duty_limit_param_name,
                                 wheel_pwm_duty_limit))
   RCCHECK(init_parameter_double(param_server, dd_wheel_radius_param_name,
-                                dd_wheel_radius))
+                                robot_wheel_radius))
   RCCHECK(init_parameter_double(param_server, dd_wheel_separation_param_name,
-                                dd_wheel_separation))
+                                robot_wheel_separation))
   RCCHECK(init_parameter_double(param_server,
                                 dd_angular_velocity_multiplier_param_name,
-                                dd_angular_velocity_multiplier))
+                                robot_angular_velocity_multiplier))
   RCCHECK(init_parameter_int(param_server, dd_input_timeout_param_name,
-                             dd_input_timeout))
+                             robot_input_timeout))
   RCCHECK(init_parameter_double(param_server, battery_min_voltage_param_name,
                                 battery_min_voltage))
   return true;
@@ -83,15 +83,15 @@ void Parameters::update(rclc_parameter_server_t* param_server) {
   get_parameter_double(param_server, wheel_pwm_duty_limit_param_name,
                        &wheel_pwm_duty_limit);
   get_parameter_double(param_server, dd_wheel_radius_param_name,
-                       &dd_wheel_radius);
+                       &robot_wheel_radius);
   get_parameter_double(param_server, dd_wheel_separation_param_name,
-                       &dd_wheel_separation);
+                       &robot_wheel_separation);
   get_parameter_double(param_server, dd_angular_velocity_multiplier_param_name,
-                       &dd_angular_velocity_multiplier);
+                       &robot_angular_velocity_multiplier);
   int64_t input_timeout;
   rclc_parameter_get_int(param_server, dd_input_timeout_param_name,
                          &input_timeout);
-  dd_input_timeout = static_cast<int>(input_timeout);
+  robot_input_timeout = static_cast<int>(input_timeout);
   get_parameter_double(param_server, battery_min_voltage_param_name,
                        &battery_min_voltage);
 }

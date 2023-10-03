@@ -1,6 +1,6 @@
 #pragma once
 
-#include "diff_drive_lib/diff_drive_controller.hpp"
+#include "diff_drive_lib/robot_controller.hpp"
 
 #include "motor_controller.hpp"
 
@@ -69,25 +69,29 @@ extern MotorController MotB;
 extern MotorController MotC;
 extern MotorController MotD;
 
-constexpr diff_drive_lib::DiffDriveConfiguration DD_CONFIG = {
+constexpr diff_drive_lib::RobotConfiguration ROBOT_CONFIG = {
     .wheel_FL_conf =
         {
             .motor = MotC,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_RL_conf =
         {
             .motor = MotD,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_FR_conf =
         {
             .motor = MotA,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_RR_conf =
         {
             .motor = MotB,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
 };

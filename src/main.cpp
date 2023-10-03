@@ -18,6 +18,7 @@
 #include <std_msgs/msg/float32.h>
 #include <std_srvs/srv/trigger.h>
 
+#include "diff_drive_lib/diff_drive_controller.hpp"
 #include "diff_drive_lib/wheel_controller.hpp"
 
 #include "microros/serial_transport.hpp"
@@ -93,7 +94,7 @@ MotorController MotB(MOT_B_CONFIG);
 MotorController MotC(MOT_C_CONFIG);
 MotorController MotD(MOT_D_CONFIG);
 
-static diff_drive_lib::DiffDriveController dc(DD_CONFIG);
+static diff_drive_lib::DiffDriveController dc(ROBOT_CONFIG);
 // static ImuReceiver imu_receiver(&IMU_I2C);
 
 static Parameters params;
@@ -102,7 +103,7 @@ static std::atomic_bool reload_parameters(false);
 static void cmdVelCallback(const void* msgin) {
   const geometry_msgs__msg__Twist* msg =
       (const geometry_msgs__msg__Twist*)msgin;
-  dc.setSpeed(msg->linear.x, msg->angular.z);
+  dc.setSpeed(msg->linear.x, msg->linear.y, msg->angular.z);
 }
 
 static void resetOdometryCallback(const void* reqin, void* resin) {
@@ -460,7 +461,7 @@ static void update() {
     auto dd_odom = dc.getOdom();
 
     wheel_odom.stamp = now();
-    wheel_odom.velocity_lin = dd_odom.velocity_lin;
+    wheel_odom.velocity_lin = dd_odom.velocity_lin_x;
     wheel_odom.velocity_ang = dd_odom.velocity_ang;
     wheel_odom.pose_x = dd_odom.pose_x;
     wheel_odom.pose_y = dd_odom.pose_y;
