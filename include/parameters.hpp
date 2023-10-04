@@ -23,6 +23,8 @@ struct Parameters : diff_drive_lib::RobotParams {
 
   float battery_min_voltage = 10.0;
 
+  bool mecanum_wheels = false;
+
   bool init(rclc_parameter_server_t* param_server);
   void update(rclc_parameter_server_t* param_server);
 };

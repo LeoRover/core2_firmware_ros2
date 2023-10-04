@@ -1,21 +1,22 @@
 #include "parameters.hpp"
 
-static constexpr const char* wheel_encoder_resolution_param_name =
+constexpr const char* wheel_encoder_resolution_param_name =
     "wheels/encoder_resolution";
-static constexpr const char* wheel_pid_p_param_name = "wheels/pid/p";
-static constexpr const char* wheel_pid_i_param_name = "wheels/pid/i";
-static constexpr const char* wheel_pid_d_param_name = "wheels/pid/d";
-static constexpr const char* wheel_pwm_duty_limit_param_name =
+constexpr const char* wheel_pid_p_param_name = "wheels/pid/p";
+constexpr const char* wheel_pid_i_param_name = "wheels/pid/i";
+constexpr const char* wheel_pid_d_param_name = "wheels/pid/d";
+constexpr const char* wheel_pwm_duty_limit_param_name =
     "wheels/pwm_duty_limit";
-static constexpr const char* dd_wheel_radius_param_name =
+constexpr const char* mecanum_wheels_param_name = "mecanum_wheels";
+constexpr const char* dd_wheel_radius_param_name =
     "diff_drive/wheel_radius";
-static constexpr const char* dd_wheel_separation_param_name =
+constexpr const char* dd_wheel_separation_param_name =
     "diff_drive/wheel_separation";
-static constexpr const char* dd_angular_velocity_multiplier_param_name =
+constexpr const char* dd_angular_velocity_multiplier_param_name =
     "diff_drive/angular_velocity_multiplier";
-static constexpr const char* dd_input_timeout_param_name =
+constexpr const char* dd_input_timeout_param_name =
     "diff_drive/input_timeout";
-static constexpr const char* battery_min_voltage_param_name =
+constexpr const char* battery_min_voltage_param_name =
     "battery_min_voltage";
 
 inline rcl_ret_t init_parameter_double(rclc_parameter_server_t* param_server,
@@ -38,6 +39,16 @@ inline rcl_ret_t init_parameter_int(rclc_parameter_server_t* param_server,
   return ret;
 }
 
+inline rcl_ret_t init_parameter_bool(rclc_parameter_server_t* param_server,
+                                     const char* param_name,
+                                     bool default_value) {
+  rcl_ret_t ret =
+      rclc_add_parameter(param_server, param_name, RCLC_PARAMETER_BOOL);
+  if (ret == RCL_RET_OK)
+    return rclc_parameter_set_bool(param_server, param_name, default_value);
+  return ret;
+}
+
 #define RCCHECK(fn) \
   if ((fn != RCL_RET_OK)) return false;
 
@@ -53,6 +64,8 @@ bool Parameters::init(rclc_parameter_server_t* param_server) {
       init_parameter_double(param_server, wheel_pid_d_param_name, wheel_pid_d))
   RCCHECK(init_parameter_double(param_server, wheel_pwm_duty_limit_param_name,
                                 wheel_pwm_duty_limit))
+  RCCHECK(init_parameter_bool(param_server, mecanum_wheels_param_name,
+                              mecanum_wheels))                                
   RCCHECK(init_parameter_double(param_server, dd_wheel_radius_param_name,
                                 robot_wheel_radius))
   RCCHECK(init_parameter_double(param_server, dd_wheel_separation_param_name,
@@ -75,6 +88,8 @@ inline void get_parameter_double(rclc_parameter_server_t* param_server,
 }
 
 void Parameters::update(rclc_parameter_server_t* param_server) {
+  rclc_parameter_get_bool(param_server, mecanum_wheels_param_name,
+                          &mecanum_wheels);
   get_parameter_double(param_server, wheel_encoder_resolution_param_name,
                        &wheel_encoder_resolution);
   get_parameter_double(param_server, wheel_pid_p_param_name, &wheel_pid_p);
