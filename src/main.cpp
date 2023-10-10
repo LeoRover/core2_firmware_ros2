@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 
 #include <mbed.h>
 
@@ -408,14 +409,16 @@ bool initController() {
 }
 
 static void loop() {
-  static uint32_t boot_enter_time;
+  // static uint32_t boot_enter_time;
+  static Timer boot_timer;
   switch (status) {
     case AgentStatus::CONNECTING_TO_AGENT:
       // Try to connect to uros agent
       if (rmw_uros_ping_agent(1000, 1) == RMW_RET_OK) {
         if (initROS()) {
           (void)!rcl_timer_call(&sync_timer);
-          boot_enter_time = time();
+          // boot_enter_time = time();
+              boot_timer.start();
               status = AgentStatus::BOOT;
         } else
           finiROS();
@@ -431,12 +434,14 @@ static void loop() {
       if (publish_param_trigger) {
         (void)!rcl_publish(&param_trigger_pub, &param_trigger, NULL);
         publish_param_trigger = false;
-      } else if (boot_request || time() - boot_enter_time >= BOOT_TIMEOUT) {
+      } else if (boot_request || std::chrono::duration_cast<std::chrono::milliseconds>(boot_timer.elapsed_time().count()) >= BOOT_TIMEOUT) {
         (void)!rcl_publisher_fini(&param_trigger_pub, &node);
         // this uncomented breaks whole ROS communication
         // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
         // (void)!rcl_service_fini(&boot_firmware_srv, &node);
         (void)!initController();
+        boot_timer.stop();
+        boot_timer.reset();
         status = AgentStatus::AGENT_CONNECTED;
       }
       break;
