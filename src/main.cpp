@@ -1,5 +1,4 @@
 #include <atomic>
-#include <chrono>
 
 #include <mbed.h>
 
@@ -433,9 +432,7 @@ static void loop() {
       if (publish_param_trigger) {
         (void)!rcl_publish(&param_trigger_pub, &param_trigger, NULL);
         publish_param_trigger = false;
-      } else if (boot_request ||
-                 std::chrono::duration_cast<std::chrono::milliseconds>(
-                     boot_timer.elapsed_time().count()) >= BOOT_TIMEOUT) {
+      } else if (boot_request || boot_timer.read_ms() >= BOOT_TIMEOUT) {
         (void)!rcl_publisher_fini(&param_trigger_pub, &node);
         // this uncomented breaks whole ROS communication
         // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
