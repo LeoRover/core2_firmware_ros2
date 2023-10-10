@@ -248,7 +248,7 @@ static bool initROS() {
   // RCCHECK(rclc_publisher_init_best_effort(
   //     &imu_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, Imu),
   //     "~/imu"))
-    RCCHECK(rclc_publisher_init_best_effort(
+  RCCHECK(rclc_publisher_init_best_effort(
       &param_trigger_pub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty), "~/param_trigger"))
 
@@ -259,20 +259,20 @@ static bool initROS() {
   RCCHECK(rclc_executor_add_subscription(&executor, &twist_sub, &twist_msg,
                                          cmdVelCallback, ON_NEW_DATA))
 
-#define WHEEL_INIT_ROS(NAME)                                   \
-  RCCHECK(rclc_subscription_init_default(                      \
-      &NAME##_cmd_pwm_sub, &node,                              \
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),     \
-      NAME##_cmd_pwm_topic))                                   \
-  RCCHECK(rclc_executor_add_subscription_with_context(         \
-      &executor, &NAME##_cmd_pwm_sub, &NAME##_cmd_pwm_msg,     \
+#define WHEEL_INIT_ROS(NAME)                                            \
+  RCCHECK(rclc_subscription_init_default(                               \
+      &NAME##_cmd_pwm_sub, &node,                                       \
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),              \
+      NAME##_cmd_pwm_topic))                                            \
+  RCCHECK(rclc_executor_add_subscription_with_context(                  \
+      &executor, &NAME##_cmd_pwm_sub, &NAME##_cmd_pwm_msg,              \
       wheelCmdPWMDutyCallback, &controller->wheel_##NAME, ON_NEW_DATA)) \
-  RCCHECK(rclc_subscription_init_default(                      \
-      &NAME##_cmd_vel_sub, &node,                              \
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),     \
-      NAME##_cmd_vel_topic))                                   \
-  RCCHECK(rclc_executor_add_subscription_with_context(         \
-      &executor, &NAME##_cmd_vel_sub, &NAME##_cmd_vel_msg,     \
+  RCCHECK(rclc_subscription_init_default(                               \
+      &NAME##_cmd_vel_sub, &node,                                       \
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),              \
+      NAME##_cmd_vel_topic))                                            \
+  RCCHECK(rclc_executor_add_subscription_with_context(                  \
+      &executor, &NAME##_cmd_vel_sub, &NAME##_cmd_vel_msg,              \
       wheelCmdVelCallback, &controller->wheel_##NAME, ON_NEW_DATA))
 
   WHEEL_INIT_ROS(FL)
@@ -417,9 +417,8 @@ static void loop() {
       if (rmw_uros_ping_agent(1000, 1) == RMW_RET_OK) {
         if (initROS()) {
           (void)!rcl_timer_call(&sync_timer);
-          // boot_enter_time = time();
-              boot_timer.start();
-              status = AgentStatus::BOOT;
+          boot_timer.start();
+          status = AgentStatus::BOOT;
         } else
           finiROS();
       }
@@ -434,7 +433,9 @@ static void loop() {
       if (publish_param_trigger) {
         (void)!rcl_publish(&param_trigger_pub, &param_trigger, NULL);
         publish_param_trigger = false;
-      } else if (boot_request || std::chrono::duration_cast<std::chrono::milliseconds>(boot_timer.elapsed_time().count()) >= BOOT_TIMEOUT) {
+      } else if (boot_request ||
+                 std::chrono::duration_cast<std::chrono::milliseconds>(
+                     boot_timer.elapsed_time().count()) >= BOOT_TIMEOUT) {
         (void)!rcl_publisher_fini(&param_trigger_pub, &node);
         // this uncomented breaks whole ROS communication
         // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
@@ -459,7 +460,7 @@ static void loop() {
       if (publish_wheel_odom) {
         if (params.mecanum_wheels) {
           (void)!rcl_publish(&wheel_odom_mecanum_pub, &wheel_odom_mecanum,
-                            NULL);
+                             NULL);
         } else {
           (void)!rcl_publish(&wheel_odom_pub, &wheel_odom, NULL);
         }
@@ -471,16 +472,16 @@ static void loop() {
         publish_wheel_states = false;
       }
 
-  // if (publish_imu) {
-  //   (void)!rcl_publish(&imu_pub, &imu, NULL);
-  //   publish_imu = false;
-  // }
+      // if (publish_imu) {
+      //   (void)!rcl_publish(&imu_pub, &imu, NULL);
+      //   publish_imu = false;
+      // }
 
       if (reload_parameters.exchange(false)) {
         params.update(&param_server);
         controller->updateParams(params);
       }
-            break;
+      break;
     case AgentStatus::AGENT_LOST:
       controller->disable();
       finiROS();
@@ -551,7 +552,7 @@ static void update() {
                                                   cnt / BATTERY_PROBE_PERIOD));
   }
 
-if (battery_avg < params.battery_min_voltage) {
+  if (battery_avg < params.battery_min_voltage) {
     battery_led_status = BatteryLedStatus::LOW_BATTERY;
   } else {
     if (status == AgentStatus::BOOT) {
