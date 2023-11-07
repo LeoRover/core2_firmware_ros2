@@ -5,7 +5,7 @@
 #include "motor_controller.hpp"
 
 // Size of the heap memory used for micro-ROS entities
-constexpr uint32_t UROS_HEAP_SIZE = 30000;
+constexpr uint32_t UROS_HEAP_SIZE = 40000;
 
 // Domain ID used for ROS communication
 constexpr size_t ROS_DOMAIN_ID = 0;

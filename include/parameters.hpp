@@ -17,6 +17,7 @@ struct Parameters : diff_drive_lib::RobotParams {
 
     robot_wheel_radius = 0.0625F;
     robot_wheel_separation = 0.33F;
+    robot_wheel_base = 0.3052;
     robot_angular_velocity_multiplier = 1.91F;
     robot_input_timeout = 500;
   }
