@@ -121,6 +121,9 @@ MotorController MotB(MOT_B_CONFIG);
 MotorController MotC(MOT_C_CONFIG);
 MotorController MotD(MOT_D_CONFIG);
 
+static uint8_t
+    controller_buffer[std::max(sizeof(diff_drive_lib::DiffDriveController),
+                               sizeof(diff_drive_lib::MecanumController))];
 static diff_drive_lib::RobotController* controller;
 // static ImuReceiver imu_receiver(&IMU_I2C);
 
@@ -400,12 +403,14 @@ void initController() {
         &wheel_odom_mecanum_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdomMecanum),
         "~/wheel_odom_mecanum");
-    controller = new diff_drive_lib::MecanumController(ROBOT_CONFIG);
+    controller =
+        new (controller_buffer) diff_drive_lib::MecanumController(ROBOT_CONFIG);
   } else {
     rclc_publisher_init_best_effort(
         &wheel_odom_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom");
-    controller = new diff_drive_lib::DiffDriveController(ROBOT_CONFIG);
+    controller = new (controller_buffer)
+        diff_drive_lib::DiffDriveController(ROBOT_CONFIG);
   }
   controller->init(params);
 }
@@ -416,7 +421,6 @@ void finiController() {
   } else {
     (void)!rcl_publisher_fini(&wheel_odom_pub, &node);
   }
-  delete controller;
 }
 
 static void loop() {
