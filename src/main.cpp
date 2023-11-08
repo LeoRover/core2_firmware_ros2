@@ -71,6 +71,9 @@ static std_msgs__msg__Empty param_trigger;
 static rcl_publisher_t param_trigger_pub;
 static std::atomic_bool publish_param_trigger(true);
 
+static bool mecanum_wheels = false;
+static std::atomic_bool controller_replacement(false);
+
 #define WHEEL_WRAPPER(NAME)                         \
   constexpr const char* NAME##_cmd_pwm_topic =      \
       "~/wheel_" #NAME "/cmd_pwm_duty";             \
@@ -390,25 +393,33 @@ static void setup() {
   battery_led_status = BatteryLedStatus::NOT_CONNECTED;
 }
 
-bool initController() {
-  if (params.mecanum_wheels) {
-    RCCHECK(rclc_publisher_init_best_effort(
+void initController() {
+  mecanum_wheels = params.mecanum_wheels;
+  if (mecanum_wheels) {
+    rclc_publisher_init_best_effort(
         &wheel_odom_mecanum_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdomMecanum),
-        "~/wheel_odom_mecanum"))
+        "~/wheel_odom_mecanum");
     controller = new diff_drive_lib::MecanumController(ROBOT_CONFIG);
   } else {
-    RCCHECK(rclc_publisher_init_best_effort(
+    rclc_publisher_init_best_effort(
         &wheel_odom_pub, &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom"))
+        ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom");
     controller = new diff_drive_lib::DiffDriveController(ROBOT_CONFIG);
   }
   controller->init(params);
-  return true;
+}
+
+void finiController() {
+  if (mecanum_wheels) {
+    (void)!rcl_publisher_fini(&wheel_odom_mecanum_pub, &node);
+  } else {
+    (void)!rcl_publisher_fini(&wheel_odom_pub, &node);
+  }
+  delete controller;
 }
 
 static void loop() {
-  // static uint32_t boot_enter_time;
   static Timer boot_timer;
   switch (status) {
     case AgentStatus::CONNECTING_TO_AGENT:
@@ -437,7 +448,7 @@ static void loop() {
         // this uncomented breaks whole ROS communication
         // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
         // (void)!rcl_service_fini(&boot_firmware_srv, &node);
-        (void)!initController();
+        initController();
         boot_timer.stop();
         boot_timer.reset();
         status = AgentStatus::AGENT_CONNECTED;
@@ -476,7 +487,14 @@ static void loop() {
 
       if (reload_parameters.exchange(false)) {
         params.update(&param_server);
-        controller->updateParams(params);
+        if (params.mecanum_wheels != mecanum_wheels) {
+          controller_replacement = true;
+          finiController();
+          initController();
+          controller_replacement = false;
+        } else {
+          controller->updateParams(params);
+        }
       }
       break;
     case AgentStatus::AGENT_LOST:
@@ -569,7 +587,7 @@ static void update() {
     }
   }
 
-  if (status != AgentStatus::AGENT_CONNECTED) return;
+  if (status != AgentStatus::AGENT_CONNECTED || controller_replacement) return;
 
   controller->update(UPDATE_PERIOD);
 
