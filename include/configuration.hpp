@@ -1,11 +1,11 @@
 #pragma once
 
-#include "diff_drive_lib/diff_drive_controller.hpp"
+#include "diff_drive_lib/robot_controller.hpp"
 
 #include "motor_controller.hpp"
 
 // Size of the heap memory used for micro-ROS entities
-constexpr uint32_t UROS_HEAP_SIZE = 30000;
+constexpr uint32_t UROS_HEAP_SIZE = 40000;
 
 // Domain ID used for ROS communication
 constexpr size_t ROS_DOMAIN_ID = 0;
@@ -38,6 +38,10 @@ constexpr uint8_t BATTERY_PUB_PERIOD = 10;
 constexpr uint8_t JOINTS_PUB_PERIOD = 5;
 constexpr uint8_t ODOM_PUB_PERIOD = 5;
 // constexpr uint8_t IMU_PUB_PERIOD = 1;
+constexpr uint8_t PARAM_TRIGGER_PUB_PERIOD = 100;
+
+// The time after which the firmware will boot with default parameter values
+constexpr uint32_t BOOT_TIMEOUT = 20000;
 
 // Motor driver configurations
 constexpr MotorConfiguration MOT_A_CONFIG = {
@@ -69,25 +73,29 @@ extern MotorController MotB;
 extern MotorController MotC;
 extern MotorController MotD;
 
-constexpr diff_drive_lib::DiffDriveConfiguration DD_CONFIG = {
+constexpr diff_drive_lib::RobotConfiguration ROBOT_CONFIG = {
     .wheel_FL_conf =
         {
             .motor = MotC,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_RL_conf =
         {
             .motor = MotD,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_FR_conf =
         {
             .motor = MotA,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
     .wheel_RR_conf =
         {
             .motor = MotB,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
             .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
         },
 };

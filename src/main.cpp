@@ -14,10 +14,14 @@
 #include <geometry_msgs/msg/twist.h>
 #include <leo_msgs/msg/imu.h>
 #include <leo_msgs/msg/wheel_odom.h>
+#include <leo_msgs/msg/wheel_odom_mecanum.h>
 #include <leo_msgs/msg/wheel_states.h>
+#include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/float32.h>
 #include <std_srvs/srv/trigger.h>
 
+#include "diff_drive_lib/diff_drive_controller.hpp"
+#include "diff_drive_lib/mecanum_controller.hpp"
 #include "diff_drive_lib/wheel_controller.hpp"
 
 #include "microros/serial_transport.hpp"
@@ -35,8 +39,6 @@ static rcl_node_t node;
 static rclc_executor_t executor;
 static rclc_parameter_server_t param_server;
 static rcl_timer_t ping_timer, sync_timer;
-static bool uros_agent_connected = false;
-static bool ros_initialized = false;
 
 static std_msgs__msg__Float32 battery;
 static std_msgs__msg__Float32 battery_averaged;
@@ -50,6 +52,8 @@ static std::atomic_bool publish_battery(false);
 
 static leo_msgs__msg__WheelOdom wheel_odom;
 static rcl_publisher_t wheel_odom_pub;
+static leo_msgs__msg__WheelOdomMecanum wheel_odom_mecanum;
+static rcl_publisher_t wheel_odom_mecanum_pub;
 static std::atomic_bool publish_wheel_odom(false);
 
 static leo_msgs__msg__WheelStates wheel_states;
@@ -62,6 +66,13 @@ static std::atomic_bool publish_wheel_states(false);
 
 static rcl_subscription_t twist_sub;
 static geometry_msgs__msg__Twist twist_msg;
+
+static std_msgs__msg__Empty param_trigger;
+static rcl_publisher_t param_trigger_pub;
+static std::atomic_bool publish_param_trigger(true);
+
+static bool mecanum_wheels = false;
+static std::atomic_bool controller_replacement(false);
 
 #define WHEEL_WRAPPER(NAME)                         \
   constexpr const char* NAME##_cmd_pwm_topic =      \
@@ -79,21 +90,41 @@ WHEEL_WRAPPER(FR)
 WHEEL_WRAPPER(RR)
 
 static rcl_service_t reset_odometry_srv, firmware_version_srv, board_type_srv,
-    reset_board_srv;
+    reset_board_srv, boot_firmware_srv;
 static std_srvs__srv__Trigger_Request reset_odometry_req, firmware_version_req,
-    board_type_req, reset_board_req;
+    board_type_req, reset_board_req, boot_firmware_req;
 static std_srvs__srv__Trigger_Response reset_odometry_res, firmware_version_res,
-    board_type_res, reset_board_res;
+    board_type_res, reset_board_res, boot_firmware_res;
 
 static std::atomic_bool reset_request(false);
+static std::atomic_bool boot_request(false);
 static DigitalOut LED(LED_PIN);
+
+enum class AgentStatus {
+  BOOT,
+  CONNECTING_TO_AGENT,
+  AGENT_CONNECTED,
+  AGENT_LOST
+};
+static AgentStatus status = AgentStatus::CONNECTING_TO_AGENT;
+
+enum class BatteryLedStatus {
+  LOW_BATTERY,
+  NOT_CONNECTED,
+  CONNECTED,
+  BOOT,
+};
+static BatteryLedStatus battery_led_status = BatteryLedStatus::NOT_CONNECTED;
 
 MotorController MotA(MOT_A_CONFIG);
 MotorController MotB(MOT_B_CONFIG);
 MotorController MotC(MOT_C_CONFIG);
 MotorController MotD(MOT_D_CONFIG);
 
-static diff_drive_lib::DiffDriveController dc(DD_CONFIG);
+static uint8_t
+    controller_buffer[std::max(sizeof(diff_drive_lib::DiffDriveController),
+                               sizeof(diff_drive_lib::MecanumController))];
+static diff_drive_lib::RobotController* controller;
 // static ImuReceiver imu_receiver(&IMU_I2C);
 
 static Parameters params;
@@ -102,13 +133,13 @@ static std::atomic_bool reload_parameters(false);
 static void cmdVelCallback(const void* msgin) {
   const geometry_msgs__msg__Twist* msg =
       (const geometry_msgs__msg__Twist*)msgin;
-  dc.setSpeed(msg->linear.x, msg->angular.z);
+  controller->setSpeed(msg->linear.x, msg->linear.y, msg->angular.z);
 }
 
 static void resetOdometryCallback(const void* reqin, void* resin) {
   std_srvs__srv__Trigger_Response* res =
       (std_srvs__srv__Trigger_Response*)resin;
-  dc.resetOdom();
+  controller->resetOdom();
   res->success = true;
 }
 
@@ -151,6 +182,14 @@ static void wheelCmdVelCallback(const void* msgin, void* context) {
   wheel->setTargetVelocity(msg->data);
 }
 
+static void bootFirmwareCallback(const void* reqin, void* resin) {
+  std_srvs__srv__Trigger_Response* res =
+      (std_srvs__srv__Trigger_Response*)resin;
+  boot_request = true;
+  rosidl_runtime_c__String__assign(&res->message, "Requested firmware boot.");
+  res->success = true;
+}
+
 static bool parameterChangedCallback(const Parameter*, const Parameter*,
                                      void*) {
   reload_parameters = true;
@@ -160,7 +199,8 @@ static bool parameterChangedCallback(const Parameter*, const Parameter*,
 static UARTSerial uros_serial(RPI_SERIAL_TX, RPI_SERIAL_RX);
 
 static void pingTimerCallback(rcl_timer_t* timer, int64_t last_call_time) {
-  if (rmw_uros_ping_agent(200, 3) != RMW_RET_OK) uros_agent_connected = false;
+  if (rmw_uros_ping_agent(200, 3) != RMW_RET_OK)
+    status = AgentStatus::AGENT_LOST;
 }
 
 static void syncTimerCallback(rcl_timer_t* timer, int64_t last_call_time) {
@@ -171,8 +211,10 @@ static void initMsgs() {
   std_msgs__msg__Float32__init(&battery);
   std_msgs__msg__Float32__init(&battery_averaged);
   leo_msgs__msg__WheelOdom__init(&wheel_odom);
+  leo_msgs__msg__WheelOdomMecanum__init(&wheel_odom_mecanum);
   leo_msgs__msg__WheelStates__init(&wheel_states);
   // leo_msgs__msg__Imu__init(&imu);
+  std_msgs__msg__Empty__init(&param_trigger);
 }
 
 #define RCCHECK(fn) \
@@ -193,7 +235,7 @@ static bool initROS() {
 
   // Executor
   RCCHECK(rclc_executor_init(&executor, &support.context,
-                             15 + RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES,
+                             16 + RCLC_EXECUTOR_PARAMETER_SERVER_HANDLES,
                              &microros_allocator))
 
   // Publishers
@@ -205,15 +247,15 @@ static bool initROS() {
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
       "~/battery_averaged"))
   RCCHECK(rclc_publisher_init_best_effort(
-      &wheel_odom_pub, &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom"))
-  RCCHECK(rclc_publisher_init_best_effort(
       &wheel_states_pub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelStates),
       "~/wheel_states"))
   // RCCHECK(rclc_publisher_init_best_effort(
   //     &imu_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, Imu),
   //     "~/imu"))
+  RCCHECK(rclc_publisher_init_best_effort(
+      &param_trigger_pub, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty), "~/param_trigger"))
 
   // Subscriptions
   RCCHECK(rclc_subscription_init_default(
@@ -222,21 +264,21 @@ static bool initROS() {
   RCCHECK(rclc_executor_add_subscription(&executor, &twist_sub, &twist_msg,
                                          cmdVelCallback, ON_NEW_DATA))
 
-#define WHEEL_INIT_ROS(NAME)                                   \
-  RCCHECK(rclc_subscription_init_default(                      \
-      &NAME##_cmd_pwm_sub, &node,                              \
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),     \
-      NAME##_cmd_pwm_topic))                                   \
-  RCCHECK(rclc_executor_add_subscription_with_context(         \
-      &executor, &NAME##_cmd_pwm_sub, &NAME##_cmd_pwm_msg,     \
-      wheelCmdPWMDutyCallback, &dc.wheel_##NAME, ON_NEW_DATA)) \
-  RCCHECK(rclc_subscription_init_default(                      \
-      &NAME##_cmd_vel_sub, &node,                              \
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),     \
-      NAME##_cmd_vel_topic))                                   \
-  RCCHECK(rclc_executor_add_subscription_with_context(         \
-      &executor, &NAME##_cmd_vel_sub, &NAME##_cmd_vel_msg,     \
-      wheelCmdVelCallback, &dc.wheel_##NAME, ON_NEW_DATA))
+#define WHEEL_INIT_ROS(NAME)                                            \
+  RCCHECK(rclc_subscription_init_default(                               \
+      &NAME##_cmd_pwm_sub, &node,                                       \
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),              \
+      NAME##_cmd_pwm_topic))                                            \
+  RCCHECK(rclc_executor_add_subscription_with_context(                  \
+      &executor, &NAME##_cmd_pwm_sub, &NAME##_cmd_pwm_msg,              \
+      wheelCmdPWMDutyCallback, &controller->wheel_##NAME, ON_NEW_DATA)) \
+  RCCHECK(rclc_subscription_init_default(                               \
+      &NAME##_cmd_vel_sub, &node,                                       \
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),              \
+      NAME##_cmd_vel_topic))                                            \
+  RCCHECK(rclc_executor_add_subscription_with_context(                  \
+      &executor, &NAME##_cmd_vel_sub, &NAME##_cmd_vel_msg,              \
+      wheelCmdVelCallback, &controller->wheel_##NAME, ON_NEW_DATA))
 
   WHEEL_INIT_ROS(FL)
   WHEEL_INIT_ROS(RL)
@@ -268,10 +310,16 @@ static bool initROS() {
   RCCHECK(rclc_executor_add_service(&executor, &reset_board_srv,
                                     &reset_board_req, &reset_board_res,
                                     resetBoardCallback))
+  RCCHECK(rclc_service_init_default(
+      &boot_firmware_srv, &node,
+      ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, Trigger), "~/boot"))
+  RCCHECK(rclc_executor_add_service(&executor, &boot_firmware_srv,
+                                    &boot_firmware_req, &boot_firmware_res,
+                                    &bootFirmwareCallback))
 
   // Parameter Server
   static rclc_parameter_options_t param_options;
-  param_options.max_params = 11;
+  param_options.max_params = 13;
   param_options.notify_changed_over_dds = true;
   RCCHECK(rclc_parameter_server_init_with_option(&param_server, &node,
                                                  &param_options))
@@ -302,6 +350,7 @@ static void finiROS() {
   (void)!rcl_service_fini(&board_type_srv, &node);
   (void)!rcl_service_fini(&firmware_version_srv, &node);
   (void)!rcl_service_fini(&reset_odometry_srv, &node);
+  (void)!rcl_service_fini(&boot_firmware_srv, &node);
   (void)!rcl_subscription_fini(&twist_sub, &node);
   (void)!rcl_subscription_fini(&FL_cmd_vel_sub, &node);
   (void)!rcl_subscription_fini(&RL_cmd_vel_sub, &node);
@@ -314,8 +363,10 @@ static void finiROS() {
   // (void)!rcl_publisher_fini(&imu_pub, &node);
   (void)!rcl_publisher_fini(&wheel_states_pub, &node);
   (void)!rcl_publisher_fini(&wheel_odom_pub, &node);
+  (void)!rcl_publisher_fini(&wheel_odom_mecanum_pub, &node);
   (void)!rcl_publisher_fini(&battery_averaged_pub, &node);
   (void)!rcl_publisher_fini(&battery_pub, &node);
+  (void)!rcl_publisher_fini(&param_trigger_pub, &node);
   (void)!rcl_node_fini(&node);
   (void)!rcl_init_options_fini(&init_options);
   rclc_support_fini(&support);
@@ -340,56 +391,123 @@ static void setup() {
   analogin_init(&battery_adc, BAT_MEAS);
 
   encoder_gpio_pull = GPIO_PULLUP;
-  dc.init(params);
+
+  status = AgentStatus::CONNECTING_TO_AGENT;
+  battery_led_status = BatteryLedStatus::NOT_CONNECTED;
+}
+
+void initController() {
+  mecanum_wheels = params.mecanum_wheels;
+  if (mecanum_wheels) {
+    rclc_publisher_init_best_effort(
+        &wheel_odom_mecanum_pub, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdomMecanum),
+        "~/wheel_odom_mecanum");
+    controller =
+        new (controller_buffer) diff_drive_lib::MecanumController(ROBOT_CONFIG);
+  } else {
+    rclc_publisher_init_best_effort(
+        &wheel_odom_pub, &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom");
+    controller = new (controller_buffer)
+        diff_drive_lib::DiffDriveController(ROBOT_CONFIG);
+  }
+  controller->init(params);
+}
+
+void finiController() {
+  if (mecanum_wheels) {
+    (void)!rcl_publisher_fini(&wheel_odom_mecanum_pub, &node);
+  } else {
+    (void)!rcl_publisher_fini(&wheel_odom_pub, &node);
+  }
 }
 
 static void loop() {
-  // Try to connect to uros agent
-  if (!ros_initialized && rmw_uros_ping_agent(1000, 1) == RMW_RET_OK) {
-    ros_initialized = initROS();
-    if (ros_initialized) {
-      uros_agent_connected = true;
-      (void)!rcl_timer_call(&sync_timer);
-    } else
+  static Timer boot_timer;
+  switch (status) {
+    case AgentStatus::CONNECTING_TO_AGENT:
+      // Try to connect to uros agent
+      if (rmw_uros_ping_agent(1000, 1) == RMW_RET_OK) {
+        if (initROS()) {
+          (void)!rcl_timer_call(&sync_timer);
+          boot_timer.start();
+          status = AgentStatus::BOOT;
+        } else
+          finiROS();
+      }
+      break;
+    case AgentStatus::BOOT:
+      rclc_executor_spin_some(&executor, 0);
+
+      if (reload_parameters.exchange(false)) {
+        params.update(&param_server);
+      }
+
+      if (publish_param_trigger) {
+        (void)!rcl_publish(&param_trigger_pub, &param_trigger, NULL);
+        publish_param_trigger = false;
+      } else if (boot_request || boot_timer.read_ms() >= BOOT_TIMEOUT) {
+        (void)!rcl_publisher_fini(&param_trigger_pub, &node);
+        // this uncomented breaks whole ROS communication
+        // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
+        // (void)!rcl_service_fini(&boot_firmware_srv, &node);
+        initController();
+        boot_timer.stop();
+        boot_timer.reset();
+        status = AgentStatus::AGENT_CONNECTED;
+      }
+      break;
+    case AgentStatus::AGENT_CONNECTED:
+      rclc_executor_spin_some(&executor, 0);
+
+      if (reset_request) reset();
+
+      if (publish_battery) {
+        (void)!rcl_publish(&battery_pub, &battery, NULL);
+        (void)!rcl_publish(&battery_averaged_pub, &battery_averaged, NULL);
+        publish_battery = false;
+      }
+
+      if (publish_wheel_odom) {
+        if (params.mecanum_wheels) {
+          (void)!rcl_publish(&wheel_odom_mecanum_pub, &wheel_odom_mecanum,
+                             NULL);
+        } else {
+          (void)!rcl_publish(&wheel_odom_pub, &wheel_odom, NULL);
+        }
+        publish_wheel_odom = false;
+      }
+
+      if (publish_wheel_states) {
+        (void)!rcl_publish(&wheel_states_pub, &wheel_states, NULL);
+        publish_wheel_states = false;
+      }
+
+      // if (publish_imu) {
+      //   (void)!rcl_publish(&imu_pub, &imu, NULL);
+      //   publish_imu = false;
+      // }
+
+      if (reload_parameters.exchange(false)) {
+        params.update(&param_server);
+        if (params.mecanum_wheels != mecanum_wheels) {
+          controller_replacement = true;
+          finiController();
+          initController();
+          controller_replacement = false;
+        } else {
+          controller->updateParams(params);
+        }
+      }
+      break;
+    case AgentStatus::AGENT_LOST:
+      controller->disable();
       finiROS();
-  }
-
-  if (!ros_initialized) return;
-
-  // Handle agent disconnect
-  if (!uros_agent_connected) {
-    dc.disable();
-    finiROS();
-    ros_initialized = false;
-    return;
-  }
-
-  rclc_executor_spin_some(&executor, 0);
-
-  if (publish_battery) {
-    (void)!rcl_publish(&battery_pub, &battery, NULL);
-    (void)!rcl_publish(&battery_averaged_pub, &battery_averaged, NULL);
-    publish_battery = false;
-  }
-
-  if (publish_wheel_odom) {
-    (void)!rcl_publish(&wheel_odom_pub, &wheel_odom, NULL);
-    publish_wheel_odom = false;
-  }
-
-  if (publish_wheel_states) {
-    (void)!rcl_publish(&wheel_states_pub, &wheel_states, NULL);
-    publish_wheel_states = false;
-  }
-
-  // if (publish_imu) {
-  //   (void)!rcl_publish(&imu_pub, &imu, NULL);
-  //   publish_imu = false;
-  // }
-
-  if (reload_parameters.exchange(false)) {
-    params.update(&param_server);
-    dc.updateParams(params);
+      status = AgentStatus::CONNECTING_TO_AGENT;
+      break;
+    default:
+      break;
   }
 }
 
@@ -399,6 +517,40 @@ static builtin_interfaces__msg__Time now() {
   stamp.sec = nanos / (1000 * 1000 * 1000);
   stamp.nanosec = nanos % (1000 * 1000 * 1000);
   return stamp;
+}
+
+void update_battery_led(uint32_t cnt) {
+  static bool blinking = false;
+  static uint8_t blinks_cnt = 0;
+
+  switch (battery_led_status) {
+    case BatteryLedStatus::LOW_BATTERY:
+      if (cnt % 10 == 0) gpio_toggle(LED);
+      break;
+    case BatteryLedStatus::NOT_CONNECTED:
+      if (cnt % 50 == 0) gpio_toggle(LED);
+      break;
+    case BatteryLedStatus::CONNECTED:
+      gpio_reset(LED);
+      break;
+    case BatteryLedStatus::BOOT:
+      if (blinking) {
+        if (cnt % 10 == 0) {
+          gpio_toggle(LED);
+          ++blinks_cnt;
+        }
+        if (blinks_cnt >= 4) {
+          blinking = false;
+          blinks_cnt = 0;
+        }
+      } else {
+        gpio_reset(LED);
+        if (cnt % 100 == 0) blinking = true;
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 static void update() {
@@ -420,20 +572,28 @@ static void update() {
   }
 
   if (battery_avg < params.battery_min_voltage) {
-    if (cnt % 10 == 0) gpio_toggle(LED);
+    battery_led_status = BatteryLedStatus::LOW_BATTERY;
   } else {
-    if (!ros_initialized) {
-      if (cnt % 50 == 0) gpio_toggle(LED);
+    if (status == AgentStatus::BOOT) {
+      battery_led_status = BatteryLedStatus::BOOT;
+    } else if (status != AgentStatus::AGENT_CONNECTED) {
+      battery_led_status = BatteryLedStatus::NOT_CONNECTED;
     } else {
-      gpio_reset(LED);
+      battery_led_status = BatteryLedStatus::CONNECTED;
     }
   }
 
-  if (!ros_initialized) return;
+  update_battery_led(cnt);
 
-  if (reset_request) reset();
+  if (status == AgentStatus::BOOT) {
+    if (cnt % PARAM_TRIGGER_PUB_PERIOD == 0 && !publish_param_trigger) {
+      publish_param_trigger = true;
+    }
+  }
 
-  dc.update(UPDATE_PERIOD);
+  if (status != AgentStatus::AGENT_CONNECTED || controller_replacement) return;
+
+  controller->update(UPDATE_PERIOD);
 
   if (cnt % BATTERY_PUB_PERIOD == 0 && !publish_battery) {
     battery.data = battery_new;
@@ -443,29 +603,38 @@ static void update() {
   }
 
   if (cnt % JOINTS_PUB_PERIOD == 0 && !publish_wheel_states) {
-    auto dd_wheel_states = dc.getWheelStates();
+    auto robot_wheel_states = controller->getWheelStates();
 
     wheel_states.stamp = now();
     for (size_t i = 0; i < 4; i++) {
-      wheel_states.position[i] = dd_wheel_states.position[i];
-      wheel_states.velocity[i] = dd_wheel_states.velocity[i];
-      wheel_states.torque[i] = dd_wheel_states.torque[i];
-      wheel_states.pwm_duty_cycle[i] = dd_wheel_states.pwm_duty_cycle[i];
+      wheel_states.position[i] = robot_wheel_states.position[i];
+      wheel_states.velocity[i] = robot_wheel_states.velocity[i];
+      wheel_states.torque[i] = robot_wheel_states.torque[i];
+      wheel_states.pwm_duty_cycle[i] = robot_wheel_states.pwm_duty_cycle[i];
     }
 
     publish_wheel_states = true;
   }
 
   if (cnt % ODOM_PUB_PERIOD == 0 && !publish_wheel_odom) {
-    auto dd_odom = dc.getOdom();
+    auto robot_odom = controller->getOdom();
 
-    wheel_odom.stamp = now();
-    wheel_odom.velocity_lin = dd_odom.velocity_lin;
-    wheel_odom.velocity_ang = dd_odom.velocity_ang;
-    wheel_odom.pose_x = dd_odom.pose_x;
-    wheel_odom.pose_y = dd_odom.pose_y;
-    wheel_odom.pose_yaw = dd_odom.pose_yaw;
-
+    if (params.mecanum_wheels) {
+      wheel_odom_mecanum.stamp = now();
+      wheel_odom_mecanum.velocity_lin_x = robot_odom.velocity_lin_x;
+      wheel_odom_mecanum.velocity_lin_y = robot_odom.velocity_lin_y;
+      wheel_odom_mecanum.velocity_ang = robot_odom.velocity_ang;
+      wheel_odom_mecanum.pose_x = robot_odom.pose_x;
+      wheel_odom_mecanum.pose_y = robot_odom.pose_y;
+      wheel_odom_mecanum.pose_yaw = robot_odom.pose_yaw;
+    } else {
+      wheel_odom.stamp = now();
+      wheel_odom.velocity_lin = robot_odom.velocity_lin_x;
+      wheel_odom.velocity_ang = robot_odom.velocity_ang;
+      wheel_odom.pose_x = robot_odom.pose_x;
+      wheel_odom.pose_y = robot_odom.pose_y;
+      wheel_odom.pose_yaw = robot_odom.pose_yaw;
+    }
     publish_wheel_odom = true;
   }
 
