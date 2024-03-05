@@ -373,7 +373,7 @@ static void finiROS() {
   (void)!rcl_init_options_fini(&init_options);
   rclc_support_fini(&support);
 
-  free_all_heap();
+  heap_free_all();
 }
 
 extern uint32_t encoder_gpio_pull;
