@@ -24,3 +24,7 @@ inline void gpio_toggle(mbed::DigitalOut& gpio) {
 inline void reset() {
   NVIC_SystemReset();
 }
+
+inline void delay(uint32_t delay_ms) {
+  ThisThread::sleep_for(delay_ms);
+}
