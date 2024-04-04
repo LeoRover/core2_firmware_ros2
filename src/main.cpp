@@ -28,6 +28,7 @@
 
 #include "configuration.hpp"
 #include "hal_compat.hpp"
+#include "imu_receiver.hpp"
 #include "microros_allocators.hpp"
 #include "parameters.hpp"
 
@@ -60,9 +61,10 @@ static leo_msgs__msg__WheelStates wheel_states;
 static rcl_publisher_t wheel_states_pub;
 static std::atomic_bool publish_wheel_states(false);
 
-// static leo_msgs__msg__Imu imu;
-// static rcl_publisher_t imu_pub;
-// static std::atomic_bool publish_imu(false);
+static leo_msgs__msg__Imu imu;
+static rcl_publisher_t imu_pub;
+static std::atomic_bool publish_imu(false);
+static bool imu_advertised;
 
 static rcl_subscription_t twist_sub;
 static geometry_msgs__msg__Twist twist_msg;
@@ -101,6 +103,7 @@ static std_srvs__srv__Trigger_Response reset_odometry_res, firmware_version_res,
 static std::atomic_bool reset_request(false);
 static std::atomic_bool boot_request(false);
 static DigitalOut LED(LED_PIN);
+static DigitalOut sens_power(SENS_POWER_ON, 0);
 
 enum class AgentStatus {
   BOOT,
@@ -127,7 +130,9 @@ static uint8_t
     controller_buffer[std::max(sizeof(diff_drive_lib::DiffDriveController),
                                sizeof(diff_drive_lib::MecanumController))];
 static diff_drive_lib::RobotController* controller;
-// static ImuReceiver imu_receiver(&IMU_I2C);
+
+static mbed::I2C i2c_(SENS2_PIN4, SENS2_PIN3);
+static ImuReceiver imu_receiver(i2c_);
 
 static Parameters params;
 static std::atomic_bool reload_parameters(false);
@@ -215,7 +220,7 @@ static void initMsgs() {
   leo_msgs__msg__WheelOdom__init(&wheel_odom);
   leo_msgs__msg__WheelOdomMecanum__init(&wheel_odom_mecanum);
   leo_msgs__msg__WheelStates__init(&wheel_states);
-  // leo_msgs__msg__Imu__init(&imu);
+  leo_msgs__msg__Imu__init(&imu);
   std_msgs__msg__Empty__init(&param_trigger);
 }
 
@@ -252,9 +257,6 @@ static bool initROS() {
       &wheel_states_pub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelStates),
       "~/wheel_states"))
-  // RCCHECK(rclc_publisher_init_best_effort(
-  //     &imu_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, Imu),
-  //     "~/imu"))
   RCCHECK(rclc_publisher_init_best_effort(
       &param_trigger_pub, &node,
       ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty), "~/param_trigger"))
@@ -362,7 +364,10 @@ static void finiROS() {
   (void)!rcl_subscription_fini(&RL_cmd_pwm_sub, &node);
   (void)!rcl_subscription_fini(&FR_cmd_pwm_sub, &node);
   (void)!rcl_subscription_fini(&RR_cmd_pwm_sub, &node);
-  // (void)!rcl_publisher_fini(&imu_pub, &node);
+  if (imu_advertised) {
+    (void)!rcl_publisher_fini(&imu_pub, &node);
+    imu_advertised = false;
+  }
   (void)!rcl_publisher_fini(&wheel_states_pub, &node);
   (void)!rcl_publisher_fini(&wheel_odom_pub, &node);
   (void)!rcl_publisher_fini(&wheel_odom_mecanum_pub, &node);
@@ -428,6 +433,13 @@ void finiController() {
   heap_set_current_pointer(reset_pointer_position);
 }
 
+bool initImu() {
+  RCCHECK(rclc_publisher_init_best_effort(
+      &imu_pub, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, Imu),
+      "~/imu"))
+  return true;
+}
+
 static void loop() {
   static Timer boot_timer;
   switch (status) {
@@ -452,7 +464,8 @@ static void loop() {
       if (publish_param_trigger) {
         (void)!rcl_publish(&param_trigger_pub, &param_trigger, NULL);
         publish_param_trigger = false;
-      } else if (boot_request || boot_timer.read_ms() >= BOOT_TIMEOUT) {
+      } else if (boot_request ||
+                 (uint32_t)boot_timer.read_ms() >= BOOT_TIMEOUT) {
         (void)!rcl_publisher_fini(&param_trigger_pub, &node);
         // this uncomented breaks whole ROS communication
         // (void)!rclc_executor_remove_service(&executor, &boot_firmware_srv);
@@ -460,6 +473,7 @@ static void loop() {
         initController();
         boot_timer.stop();
         boot_timer.reset();
+        imu_receiver.start();
         status = AgentStatus::AGENT_CONNECTED;
       }
       break;
@@ -489,10 +503,14 @@ static void loop() {
         publish_wheel_states = false;
       }
 
-      // if (publish_imu) {
-      //   (void)!rcl_publish(&imu_pub, &imu, NULL);
-      //   publish_imu = false;
-      // }
+      if (imu_receiver.is_initialized()) {
+        if (!imu_advertised) {
+          imu_advertised = initImu();
+        } else if (publish_imu) {
+          (void)!rcl_publish(&imu_pub, &imu, NULL);
+          publish_imu = false;
+        }
+      }
 
       if (reload_parameters.exchange(false)) {
         params.update(&param_server);
@@ -509,6 +527,7 @@ static void loop() {
     case AgentStatus::AGENT_LOST:
       controller->disable();
       finiROS();
+      imu_receiver.stop();
       status = AgentStatus::CONNECTING_TO_AGENT;
       break;
     default:
@@ -643,23 +662,26 @@ static void update() {
     publish_wheel_odom = true;
   }
 
-  // if (cnt % IMU_PUB_PERIOD == 0 && !publish_imu) {
-  //   imu_receiver.update();
+  if (imu_receiver.is_initialized() && cnt % IMU_PUB_PERIOD == 0 &&
+      !publish_imu) {
+    imu.stamp = now();
+    imu.temperature = imu_receiver.temp;
+    imu.accel_x = imu_receiver.ax;
+    imu.accel_y = imu_receiver.ay;
+    imu.accel_z = imu_receiver.az;
+    imu.gyro_x = imu_receiver.gx;
+    imu.gyro_y = imu_receiver.gy;
+    imu.gyro_z = imu_receiver.gz;
 
-  //   imu.stamp = now();
-  //   imu.temperature = imu_receiver.temp;
-  //   imu.accel_x = imu_receiver.ax;
-  //   imu.accel_y = imu_receiver.ay;
-  //   imu.accel_z = imu_receiver.az;
-  //   imu.gyro_x = imu_receiver.gx;
-  //   imu.gyro_y = imu_receiver.gy;
-  //   imu.gyro_z = imu_receiver.gz;
-
-  //   publish_imu = true;
-  // }
+    publish_imu = true;
+  }
 }
 
 int main() {
+  ThisThread::sleep_for(100);
+  sens_power = 1;  // sensors power on
+  ThisThread::sleep_for(100);
+
   setup();
 
   Ticker update_ticker;
