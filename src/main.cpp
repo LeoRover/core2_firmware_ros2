@@ -46,9 +46,8 @@ static std_msgs__msg__Float32 battery_averaged;
 static rcl_publisher_t battery_pub;
 static rcl_publisher_t battery_averaged_pub;
 static analogin_t battery_adc;
-static float battery_buffer_memory[BATTERY_BUFFER_SIZE];
-static diff_drive_lib::CircularBuffer<float> battery_buffer(
-    BATTERY_BUFFER_SIZE, battery_buffer_memory);
+static diff_drive_lib::CircularBuffer<float, BATTERY_BUFFER_SIZE> 
+    battery_buffer;
 static std::atomic_bool publish_battery(false);
 
 static leo_msgs__msg__WheelOdom wheel_odom;
@@ -74,7 +73,7 @@ static rcl_publisher_t param_trigger_pub;
 static std::atomic_bool publish_param_trigger(true);
 
 static bool mecanum_wheels = false;
-static std::atomic_bool controller_replacement(false);
+static std::atomic_bool controller_initialized(false);
 
 static uint32_t reset_pointer_position;
 
@@ -127,9 +126,9 @@ MotorController MotC(MOT_C_CONFIG);
 MotorController MotD(MOT_D_CONFIG);
 
 static uint8_t
-    controller_buffer[std::max(sizeof(diff_drive_lib::DiffDriveController),
-                               sizeof(diff_drive_lib::MecanumController))];
-static diff_drive_lib::RobotController* controller;
+    controller_buffer[std::max(sizeof(diff_drive_lib::DiffDriveController<VELOCITY_ROLLING_WINDOW_SIZE>),
+                               sizeof(diff_drive_lib::MecanumController<VELOCITY_ROLLING_WINDOW_SIZE>))];
+static diff_drive_lib::RobotController<VELOCITY_ROLLING_WINDOW_SIZE>* controller;
 
 static mbed::I2C i2c_(SENS2_PIN4, SENS2_PIN3);
 static ImuReceiver imu_receiver(i2c_);
@@ -140,14 +139,17 @@ static std::atomic_bool reload_parameters(false);
 static void cmdVelCallback(const void* msgin) {
   const geometry_msgs__msg__Twist* msg =
       (const geometry_msgs__msg__Twist*)msgin;
-  controller->setSpeed(msg->linear.x, msg->linear.y, msg->angular.z);
+  if (controller_initialized)
+    controller->setSpeed(msg->linear.x, msg->linear.y, msg->angular.z);
 }
 
 static void resetOdometryCallback(const void* reqin, void* resin) {
   std_srvs__srv__Trigger_Response* res =
       (std_srvs__srv__Trigger_Response*)resin;
-  controller->resetOdom();
-  res->success = true;
+  if (controller_initialized) {
+    controller->resetOdom();
+    res->success = true;
+  }
 }
 
 static void resetBoardCallback(const void* reqin, void* resin) {
@@ -175,18 +177,22 @@ static void getBoardTypeCallback(const void* reqin, void* resin) {
 
 static void wheelCmdPWMDutyCallback(const void* msgin, void* context) {
   const std_msgs__msg__Float32* msg = (std_msgs__msg__Float32*)msgin;
-  diff_drive_lib::WheelController* wheel =
-      (diff_drive_lib::WheelController*)context;
-  wheel->disable();
-  wheel->motor.setPWMDutyCycle(msg->data);
+  auto wheel = static_cast<
+      diff_drive_lib::WheelController<VELOCITY_ROLLING_WINDOW_SIZE>*>(context);
+  if (controller_initialized) {
+    wheel->disable();
+    wheel->motor.setPWMDutyCycle(msg->data);
+  }
 }
 
 static void wheelCmdVelCallback(const void* msgin, void* context) {
   const std_msgs__msg__Float32* msg = (std_msgs__msg__Float32*)msgin;
-  diff_drive_lib::WheelController* wheel =
-      (diff_drive_lib::WheelController*)context;
-  wheel->enable();
-  wheel->setTargetVelocity(msg->data);
+  auto wheel = static_cast<
+      diff_drive_lib::WheelController<VELOCITY_ROLLING_WINDOW_SIZE>*>(context);
+  if (controller_initialized) {
+    wheel->enable();
+    wheel->setTargetVelocity(msg->data);
+  }
 }
 
 static void bootFirmwareCallback(const void* reqin, void* resin) {
@@ -411,19 +417,23 @@ void initController() {
         &wheel_odom_mecanum_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdomMecanum),
         "~/wheel_odom_mecanum");
-    controller =
-        new (controller_buffer) diff_drive_lib::MecanumController(ROBOT_CONFIG);
+    controller = new (controller_buffer)
+        diff_drive_lib::MecanumController<VELOCITY_ROLLING_WINDOW_SIZE>(
+            ROBOT_CONFIG);
   } else {
     rclc_publisher_init_best_effort(
         &wheel_odom_pub, &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(leo_msgs, msg, WheelOdom), "~/wheel_odom");
     controller = new (controller_buffer)
-        diff_drive_lib::DiffDriveController(ROBOT_CONFIG);
+        diff_drive_lib::DiffDriveController<VELOCITY_ROLLING_WINDOW_SIZE>(
+            ROBOT_CONFIG);
   }
   controller->init(params);
+  controller_initialized = true;
 }
 
 void finiController() {
+  controller_initialized = false;
   if (mecanum_wheels) {
     (void)!rcl_publisher_fini(&wheel_odom_mecanum_pub, &node);
   } else {
@@ -515,10 +525,8 @@ static void loop() {
       if (reload_parameters.exchange(false)) {
         params.update(&param_server);
         if (params.mecanum_wheels != mecanum_wheels) {
-          controller_replacement = true;
           finiController();
           initController();
-          controller_replacement = false;
         } else {
           controller->updateParams(params);
         }
@@ -526,6 +534,7 @@ static void loop() {
       break;
     case AgentStatus::AGENT_LOST:
       controller->disable();
+      finiController();
       finiROS();
       imu_receiver.stop();
       status = AgentStatus::CONNECTING_TO_AGENT;
@@ -615,7 +624,7 @@ static void update() {
     }
   }
 
-  if (status != AgentStatus::AGENT_CONNECTED || controller_replacement) return;
+  if (status != AgentStatus::AGENT_CONNECTED || !controller_initialized) return;
 
   controller->update(UPDATE_PERIOD);
 

@@ -18,7 +18,7 @@ constexpr const char* ROS_NODE_NAME = "firmware";
 constexpr const char* ROS_NAMESPACE = "";
 
 // Number of encoder readings to remember when estimating the wheel velocity
-constexpr uint32_t ENCODER_BUFFER_SIZE = 10;
+constexpr uint32_t VELOCITY_ROLLING_WINDOW_SIZE = 10;
 
 // The period (in number of calls to the update() function) at which the battery
 // voltage is probed
@@ -78,25 +78,21 @@ constexpr diff_drive_lib::RobotConfiguration ROBOT_CONFIG = {
     .wheel_FL_conf =
         {
             .motor = MotC,
-            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
-            .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY
         },
     .wheel_RL_conf =
         {
             .motor = MotD,
-            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
-            .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY
         },
     .wheel_FR_conf =
         {
             .motor = MotA,
-            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
-            .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY
         },
     .wheel_RR_conf =
         {
             .motor = MotB,
-            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY,
-            .velocity_rolling_window_size = ENCODER_BUFFER_SIZE,
+            .op_mode = diff_drive_lib::WheelOperationMode::VELOCITY
         },
 };
